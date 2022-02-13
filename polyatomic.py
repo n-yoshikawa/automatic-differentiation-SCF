@@ -1,63 +1,32 @@
-from pyscf import gto, scf, mp, cc, mcscf, ao2mo, fci
-import matplotlib.pyplot as plt
-import scipy.linalg
-from scipy.optimize import minimize
-import numpy
 import time
+import numpy
+
+import matplotlib.pyplot as plt
+from pyscf import gto, scf, ao2mo
+import scipy
+from scipy.optimize import minimize
 
 import jax.numpy as jnp
-import jax.scipy.linalg
-from jax import grad, jit, vmap, random
+from jax import grad, jit, random
 
 from jax.config import config
 config.update("jax_enable_x64", True)
 
+import adscf
+
 key = random.PRNGKey(0)
-
-def calculate_charge_density(C, Ne):
-    C_occ = C[:, :Ne//2]
-    P = 2.0 * jnp.dot(C_occ, C_occ.T)
-    return P
-
-def calculate_FockMatrix(Hcore, JK, P):
-    G = jnp.einsum('lk,ijkl->ij', P, JK) - 0.5 * jnp.einsum('lk,ilkj->ij', P, JK)
-    return Hcore+G
-
-def calculate_totalEnergy(P, Hcore, F):
-    e1 = jnp.einsum('ji,ij->', P, Hcore)
-    e2 = jnp.einsum('ji,ij->', P, F)
-    return 0.5 * (e1+e2)
 
 mol = gto.Mole()
 mol.charge = 0
 mol.spin = 0
 
 # Structures are from https://www.molinstincts.com/
-mol.build(atom = 'N -0.0116 1.0048 0.0076; H 0.0021 -0.0041 0.0020; H 0.9253 1.3792 0.0006; H -0.5500 1.3634 -0.7668', basis='STO-3G', unit='Angstrom')
+mol.build(atom = 'H 0.0 0.0 0.0; H 0.0 0.0 1.4', basis='ccpvdz', unit='Angstrom')
+#mol.build(atom = 'N -0.0116 1.0048 0.0076; H 0.0021 -0.0041 0.0020; H 0.9253 1.3792 0.0006; H -0.5500 1.3634 -0.7668', basis='STO-3G', unit='Angstrom')
 #mol.build(atom = 'H 0.0021 -0.0041 0.0020; C -0.0127 1.0858 0.0080; H 1.0099 1.4631 0.0003; H -0.5399 1.4469 -0.8751; H -0.5229 1.4373 0.9048', basis='STO-3G', unit='Angstrom')
 #mol.build(atom = 'H 0.0021 -0.0041 0.0020; O -0.0110 0.9628 0.0073; H 0.8669 1.3681 0.0011', basis ='3-21G', unit='Angstrom')
 
-# overlap matrix
-S = mol.intor_symmetric('int1e_ovlp')
-# kinetic energy
-T = mol.intor_symmetric('int1e_kin')
-# potential energy
-V = mol.intor_symmetric('int1e_nuc')
-Hcore = T + V
-# two electron integrals
-JK = ao2mo.restore(1, mol.intor('int2e'), mol.nao_nr())
-# the number of electrons
-Ne = mol.nelectron 
-
-@jit
-def calcEnergy(C):
-    C = jnp.reshape(C, [len(S), len(S)])
-    P = calculate_charge_density(C, Ne)
-    F = calculate_FockMatrix(Hcore, JK, P)
-    E = calculate_totalEnergy(P, Hcore, F)
-    return E
-
-gradEnergy = jit(grad(calcEnergy))
+calcEnergy, gradEnergy = adscf.calcEnergy_create(mol)
 
 start = time.time()
 mf = scf.RHF(mol)
@@ -68,6 +37,8 @@ e_scf = scf.hf.energy_tot(mf)
 
 start = time.time()
 
+# overlap matrix
+S = mol.intor_symmetric('int1e_ovlp')
 S64 = numpy.asarray(S, dtype=numpy.float64)
 X_np = scipy.linalg.inv(scipy.linalg.sqrtm(S64))
 X = jnp.asarray(X_np)
@@ -113,6 +84,7 @@ for it in range(max_iter):
     A = G @ X.T @ S - S @ X @ G.T
     cond = jnp.linalg.norm(A @ X)
     if cond < 1e-3:
+        print(it)
         break
 elapsed_time = time.time() - start
 print ("Curvilinear search: {:.3f} ms".format(elapsed_time*1000))

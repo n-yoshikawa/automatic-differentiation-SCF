@@ -1,32 +1,20 @@
-from pyscf import gto, scf, mp, cc, mcscf, ao2mo, fci
-import matplotlib.pyplot as plt
-import scipy.linalg
-from scipy.optimize import minimize
-import numpy
 import time
+import numpy
+
+import matplotlib.pyplot as plt
+from pyscf import gto, scf, ao2mo
+import scipy
+from scipy.optimize import minimize
 
 import jax.numpy as jnp
-import jax.scipy.linalg
-from jax import grad, jit, vmap, random
+from jax import grad, jit, random
 
 from jax.config import config
 config.update("jax_enable_x64", True)
 
+import adscf
+
 key = random.PRNGKey(0)
-
-def calculate_charge_density(C, Ne):
-    C_occ = C[:, :Ne//2]
-    P = 2.0 * jnp.dot(C_occ, C_occ.T)
-    return P
-
-def calculate_FockMatrix(Hcore, JK, P):
-    G = jnp.einsum('lk,ijkl->ij', P, JK) - 0.5 * jnp.einsum('lk,ilkj->ij', P, JK)
-    return Hcore+G
-
-def calculate_totalEnergy(P, Hcore, F):
-    e1 = jnp.einsum('ji,ij->', P, Hcore)
-    e2 = jnp.einsum('ji,ij->', P, F)
-    return 0.5 * (e1+e2)
 
 x = []
 y = []
@@ -47,31 +35,11 @@ for i in range(2, 26):
 
     mol.build(atom = f'H 0.0 0.0 0.0; H 0.0 0.0 {R}', basis ='STO-3G', unit='Angstrom')
 
-    # overlap matrix
-    S = mol.intor_symmetric('int1e_ovlp')
-    # kinetic energy
-    T = mol.intor_symmetric('int1e_kin')
-    # potential energy
-    V = mol.intor_symmetric('int1e_nuc')
-    Hcore = T + V
-    # two electron integrals
-    JK = ao2mo.restore(1, mol.intor('int2e'), mol.nao_nr())
-    # the number of electrons
-    Ne = mol.nelectron 
-
-    @jit
-    def calcEnergy(C):
-        C = jnp.reshape(C, [len(S), len(S)])
-        P = calculate_charge_density(C, Ne)
-        F = calculate_FockMatrix(Hcore, JK, P)
-        E = calculate_totalEnergy(P, Hcore, F)
-        return E
-
-    gradEnergy = jit(grad(calcEnergy))
+    calcEnergy, gradEnergy = adscf.calcEnergy_create(mol)
 
     start = time.time()
 
-    # PySCF calculation
+    # RHF energy calculation by PySCF
     mf = scf.RHF(mol)
     mf.scf()
     elapsed_time = time.time() - start
@@ -93,9 +61,9 @@ for i in range(2, 26):
     epsilon = 1e-3
     max_iter = 5000
 
-    I = jnp.identity(len(S))
 
     # 1. initialize X0
+    S = mol.intor_symmetric('int1e_ovlp')  # overlap matrix
     S64 = numpy.asarray(S, dtype=numpy.float64)
     X_np = scipy.linalg.inv(scipy.linalg.sqrtm(S64))
     X = jnp.asarray(X_np)
@@ -110,6 +78,7 @@ for i in range(2, 26):
     cond = jnp.linalg.norm(A @ X)
 
     # function to calculate Y(tau)
+    I = jnp.identity(len(S))
     def Y_tau(tau, X, A):
         return jnp.linalg.inv(I + 0.5 * tau * A @ S) @ (I - 0.5 * tau * A @ S) @ X
     
