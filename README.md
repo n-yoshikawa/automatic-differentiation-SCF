@@ -12,3 +12,8 @@
 - `diatomic.py` - Draw energy curve for diatomic molecules
 - `polyatomic.py` - Calculate energy for polyatomic molecules
 - `diatomic_julia.jl` - Implementation in Julia
+
+After installing the dependent libraries, just run
+```
+python diatomic.py
+```

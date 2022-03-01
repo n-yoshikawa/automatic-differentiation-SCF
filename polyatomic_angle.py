@@ -2,7 +2,7 @@ import time
 import numpy
 
 import matplotlib.pyplot as plt
-from pyscf import gto, scf
+from pyscf import gto, scf, ao2mo
 import scipy
 from scipy.optimize import minimize
 
@@ -25,16 +25,16 @@ y_aug = []
 x_scf = []
 y_scf = []
 
-for i in range(5, 31):
-    R = 0.1 * i
-    print(f"interatomic distance: {R:.2f}")
+for i in range(105, 120):
+    R = i
+    print(f"interatomic angle: {R}")
 
     mol = gto.Mole()
     mol.charge = 0
     mol.spin = 0
 
-    mol.build(atom = f'H 0.0 0.0 0.0; F 0.0 0.0 {R:.2f}',
-              basis ='STO-3G', unit='Angstrom')
+    #mol.build(atom = f'O; H 1 0.96; H 1 0.96 2 {R}', basis ='ccpvdz', unit='Angstrom')
+    mol.build(atom = f'N; H 1 1.01; H 1 1.01 2 107; H 1 1.01 2 107 3 {R}', basis ='ccpvdz', unit='Angstrom')
 
     calcEnergy, gradEnergy = adscf.calcEnergy_create(mol)
 
@@ -59,7 +59,7 @@ for i in range(5, 31):
     rho = 1e-4
     delta = 0.1
     eta = 0.5
-    epsilon = 1e-6
+    epsilon = 1e-3
     max_iter = 5000
 
     # 1. initialize X0
@@ -125,48 +125,12 @@ for i in range(5, 31):
     x.append(R)
     y.append(e)
 
-    # augmented Lagrangian
-    @jit
-    def orthogonality(x):
-        C = jnp.reshape(x, [len(S), len(S)])
-        return jnp.linalg.norm(C.transpose()@S@C - jnp.identity(len(S)))
 
-    start = time.time()
-    x0 = random.uniform(key, (S.size,))
-
-    # 1
-    mu = 1.0
-    lam = 0.0
-
-    constraint = orthogonality(x0)
-
-    # 2
-    while constraint > 1e-6:
-        def target(x):
-            h = orthogonality(x)
-            return calcEnergy(x) + mu * h ** 2.0 + lam * h
-
-        # 3
-        res = minimize(jit(target), x0, jac=jit(grad(jit(target))), method="BFGS", options={'maxiter': 100})
-        x0 = res.x
-        constraint = orthogonality(x0)
-        # 4
-        lam += 2.0 * mu * constraint
-        # 5
-        mu *= 2.0
-    elapsed_time = time.time() - start
-    print ("Augmented: {:.3f} s".format(elapsed_time*1000))
-    energy = res.fun+mol.energy_nuc()
-    print(f"calculated energy = {energy}")
-    x_aug.append(R)
-    y_aug.append(energy)
-
-p2 = plt.plot(x_scf, y_scf, marker="o")
-p1 = plt.plot(x_aug, y_aug, marker="*")
-p0 = plt.plot(x, y, marker="x")
-plt.xlabel("interatomic distance (Å)", fontsize=16)
+p0 = plt.plot(x, y, marker="o")
+p2 = plt.plot(x_scf, y_scf, marker="x")
+plt.xlabel("dihedral angle (deg)", fontsize=16)
 plt.ylabel("total energy (Eh)", fontsize=16)
-plt.legend((p0[0], p1[0], p2[0]),
-           ("Curvilinear search", "Augmented Lagrangian", "PySCF"),
-           loc='upper right')
+plt.legend((p0[0], p2[0]), ("Curvilinear search", "PySCF"))
+plt.gca().yaxis.get_major_formatter().set_useOffset(False)
+plt.tight_layout()
 plt.savefig("result.png", dpi=300)
