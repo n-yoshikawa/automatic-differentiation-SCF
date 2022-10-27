@@ -1,0 +1,5 @@
+jax[cpu] == 0.2.27
+pyscf == 2.0.1
+scipy == 1.8.0
+numpy == 1.21.5
+matplotib == 3.5.1

@@ -1,18 +1,24 @@
+import argparse
 import time
-import numpy
-
-import matplotlib.pyplot as plt
-from pyscf import gto, scf
-import scipy
-from scipy.optimize import minimize
 
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy
+import scipy
 from jax import grad, jit, random
-
 from jax.config import config
-config.update("jax_enable_x64", True)
+from pyscf import gto, scf
+from scipy.optimize import minimize
 
 import adscf
+
+config.update("jax_enable_x64", True)
+
+parser = argparse.ArgumentParser(
+    description='Draw potential energy curves for a diatomic molecule.')
+parser.add_argument('molecule', choices=['H2', 'HF'])
+parser.add_argument('basis', choices=['STO-3G', '3-21G'])
+args = parser.parse_args()
 
 key = random.PRNGKey(0)
 
@@ -25,7 +31,10 @@ y_aug = []
 x_scf = []
 y_scf = []
 
-for i in range(5, 31):
+min_range = 2 if args.molecule == 'H2' else 5
+max_range = 26 if args.molecule == 'H2' else 31
+
+for i in range(min_range, max_range):
     R = 0.1 * i
     print(f"interatomic distance: {R:.2f}")
 
@@ -33,8 +42,12 @@ for i in range(5, 31):
     mol.charge = 0
     mol.spin = 0
 
-    mol.build(atom = f'H 0.0 0.0 0.0; F 0.0 0.0 {R:.2f}',
-              basis ='STO-3G', unit='Angstrom')
+    if args.molecule == 'H2':
+        mol.build(atom=f'H 0.0 0.0 0.0; H 0.0 0.0 {R:.2f}',
+                  basis=args.basis, unit='Angstrom')
+    elif args.molecule == 'HF':
+        mol.build(atom=f'H 0.0 0.0 0.0; F 0.0 0.0 {R:.2f}',
+                  basis=args.basis, unit='Angstrom')
 
     calcEnergy, gradEnergy = adscf.calcEnergy_create(mol)
 
@@ -44,7 +57,7 @@ for i in range(5, 31):
     mf = scf.RHF(mol)
     mf.scf()
     elapsed_time = time.time() - start
-    print ("SCF: {:.3f} ms".format(elapsed_time * 1000))
+    print("SCF: {:.3f} ms".format(elapsed_time * 1000))
     e_scf = scf.hf.energy_tot(mf)
     x_scf.append(R)
     y_scf.append(e_scf)
@@ -67,7 +80,7 @@ for i in range(5, 31):
     S64 = numpy.asarray(S, dtype=numpy.float64)
     X_np = scipy.linalg.inv(scipy.linalg.sqrtm(S64))
     X = jnp.asarray(X_np)
-    
+
     # 2. set C=f(X0) and Q0=1
     C = calcEnergy(X)
     Q = 1.0
@@ -78,20 +91,21 @@ for i in range(5, 31):
 
     # function to calculate Y(tau)
     I = jnp.identity(len(S))
+
     def Y_tau(tau, X, A):
         return jnp.linalg.inv(I + 0.5 * tau * A @ S) @ (I - 0.5 * tau * A @ S) @ X
-    
+
     # main loop
     for k in range(max_iter):
         Y = Y_tau(tau, X, A)
         A_norm = jnp.linalg.norm(A, "fro")
         X_old, Q_old, G_old = X, Q, G
-    
+
         # 5
         while calcEnergy(Y) > C - rho * tau * A_norm**2.0:
             tau *= delta    # 6
             Y = Y_tau(tau, X, A)
-    
+
         # 8
         X_new = Y
         Q_new = eta * Q + 1.0
@@ -119,8 +133,8 @@ for i in range(5, 31):
             break
 
     elapsed_time = time.time() - start
-    print ("Curvilinear search: {:.3f} ms".format(elapsed_time*1000))
-    e = calcEnergy(X)+mol.energy_nuc()
+    print("Curvilinear search: {:.3f} ms".format(elapsed_time*1000))
+    e = calcEnergy(X) + mol.energy_nuc()
     print(f"total energy = {e}")
     x.append(R)
     y.append(e)
@@ -147,7 +161,8 @@ for i in range(5, 31):
             return calcEnergy(x) + mu * h ** 2.0 + lam * h
 
         # 3
-        res = minimize(jit(target), x0, jac=jit(grad(jit(target))), method="BFGS", options={'maxiter': 100})
+        res = minimize(jit(target), x0, jac=jit(grad(jit(target))),
+                       method="BFGS", options={'maxiter': 100})
         x0 = res.x
         constraint = orthogonality(x0)
         # 4
@@ -155,9 +170,9 @@ for i in range(5, 31):
         # 5
         mu *= 2.0
     elapsed_time = time.time() - start
-    print ("Augmented: {:.3f} s".format(elapsed_time*1000))
+    print("Augmented: {:.3f} s".format(elapsed_time*1000))
     energy = res.fun+mol.energy_nuc()
-    print(f"calculated energy = {energy}")
+    print(f"calculated energy = {energy}\n")
     x_aug.append(R)
     y_aug.append(energy)
 
@@ -166,7 +181,9 @@ p1 = plt.plot(x_aug, y_aug, marker="*")
 p0 = plt.plot(x, y, marker="x")
 plt.xlabel("interatomic distance (Å)", fontsize=16)
 plt.ylabel("total energy (Eh)", fontsize=16)
+location = 'upper right' if args.molecule == 'H2' else 'lower right'
 plt.legend((p0[0], p1[0], p2[0]),
            ("Curvilinear search", "Augmented Lagrangian", "PySCF"),
-           loc='upper right')
-plt.savefig("result.png", dpi=300)
+           loc=location)
+plt.savefig(f"result-{args.molecule}-{args.basis}.png", dpi=300)
+plt.show()

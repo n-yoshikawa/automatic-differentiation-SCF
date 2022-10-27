@@ -1,20 +1,22 @@
+import argparse
 import time
-import numpy
-
-import matplotlib.pyplot as plt
-from pyscf import gto, scf, ao2mo
-import scipy
-from scipy.optimize import minimize
 
 import jax.numpy as jnp
-from jax import grad, jit, random
-
+import matplotlib.pyplot as plt
+import numpy
+import scipy
 from jax.config import config
-config.update("jax_enable_x64", True)
+from pyscf import gto, scf
 
 import adscf
 
-key = random.PRNGKey(0)
+config.update("jax_enable_x64", True)
+
+
+parser = argparse.ArgumentParser(
+    description='Draw potential energy curves for a polyatomic molecule.')
+parser.add_argument('molecule', choices=['H2O', 'NH3'])
+args = parser.parse_args()
 
 x = []
 y = []
@@ -25,7 +27,10 @@ y_aug = []
 x_scf = []
 y_scf = []
 
-for i in range(105, 120):
+min_range = 95 if args.molecule == 'H2O' else 105
+max_range = 116 if args.molecule == 'H2O' else 120
+
+for i in range(min_range, max_range):
     R = i
     print(f"interatomic angle: {R}")
 
@@ -33,8 +38,12 @@ for i in range(105, 120):
     mol.charge = 0
     mol.spin = 0
 
-    #mol.build(atom = f'O; H 1 0.96; H 1 0.96 2 {R}', basis ='ccpvdz', unit='Angstrom')
-    mol.build(atom = f'N; H 1 1.01; H 1 1.01 2 107; H 1 1.01 2 107 3 {R}', basis ='ccpvdz', unit='Angstrom')
+    if args.molecule == 'H2O':
+        mol.build(atom=f'O; H 1 0.96; H 1 0.96 2 {R}',
+                  basis='ccpvdz', unit='Angstrom')
+    else:
+        mol.build(atom=f'N; H 1 1.01; H 1 1.01 2 107; H 1 1.01 2 107 3 {R}',
+                  basis='ccpvdz', unit='Angstrom')
 
     calcEnergy, gradEnergy = adscf.calcEnergy_create(mol)
 
@@ -44,7 +53,7 @@ for i in range(105, 120):
     mf = scf.RHF(mol)
     mf.scf()
     elapsed_time = time.time() - start
-    print ("SCF: {:.3f} ms".format(elapsed_time * 1000))
+    print("SCF: {:.3f} ms".format(elapsed_time * 1000))
     e_scf = scf.hf.energy_tot(mf)
     x_scf.append(R)
     y_scf.append(e_scf)
@@ -67,7 +76,7 @@ for i in range(105, 120):
     S64 = numpy.asarray(S, dtype=numpy.float64)
     X_np = scipy.linalg.inv(scipy.linalg.sqrtm(S64))
     X = jnp.asarray(X_np)
-    
+
     # 2. set C=f(X0) and Q0=1
     C = calcEnergy(X)
     Q = 1.0
@@ -78,20 +87,21 @@ for i in range(105, 120):
 
     # function to calculate Y(tau)
     I = jnp.identity(len(S))
+
     def Y_tau(tau, X, A):
         return jnp.linalg.inv(I + 0.5 * tau * A @ S) @ (I - 0.5 * tau * A @ S) @ X
-    
+
     # main loop
     for k in range(max_iter):
         Y = Y_tau(tau, X, A)
         A_norm = jnp.linalg.norm(A, "fro")
         X_old, Q_old, G_old = X, Q, G
-    
+
         # 5
         while calcEnergy(Y) > C - rho * tau * A_norm**2.0:
             tau *= delta    # 6
             Y = Y_tau(tau, X, A)
-    
+
         # 8
         X_new = Y
         Q_new = eta * Q + 1.0
@@ -119,18 +129,22 @@ for i in range(105, 120):
             break
 
     elapsed_time = time.time() - start
-    print ("Curvilinear search: {:.3f} ms".format(elapsed_time*1000))
-    e = calcEnergy(X)+mol.energy_nuc()
-    print(f"total energy = {e}")
+    print("Curvilinear search: {:.3f} ms".format(elapsed_time*1000))
+    energy = calcEnergy(X)+mol.energy_nuc()
+    print(f"total energy = {energy}\n")
     x.append(R)
-    y.append(e)
+    y.append(energy)
 
 
 p0 = plt.plot(x, y, marker="o")
 p2 = plt.plot(x_scf, y_scf, marker="x")
-plt.xlabel("dihedral angle (deg)", fontsize=16)
+if args.molecule == 'H2O':
+    plt.xlabel("bond angle (deg)", fontsize=16)
+else:
+    plt.xlabel("dihedral angle (deg)", fontsize=16)
 plt.ylabel("total energy (Eh)", fontsize=16)
 plt.legend((p0[0], p2[0]), ("Curvilinear search", "PySCF"))
 plt.gca().yaxis.get_major_formatter().set_useOffset(False)
 plt.tight_layout()
-plt.savefig("result.png", dpi=300)
+plt.savefig(f"result-{args.molecule}.png", dpi=300)
+plt.show()
