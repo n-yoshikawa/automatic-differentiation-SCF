@@ -1,5 +1,5 @@
 # Automatic Differentiation for the Direct Minimization Approach to the Hartree-Fock Method
-Source code for [Automatic Differentiation for the Direct Minimization Approach to the Hartree-Fock Method](https://doi.org/10.1021/acs.jpca.2c05922.) ([arXiv](https://arxiv.org/abs/2203.04441)).
+Source code for [Automatic Differentiation for the Direct Minimization Approach to the Hartree-Fock Method](https://doi.org/10.1021/acs.jpca.2c05922) ([arXiv](https://arxiv.org/abs/2203.04441)).
 
 ## Dependencies
 - JAX
